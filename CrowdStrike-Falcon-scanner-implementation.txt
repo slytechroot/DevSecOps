@@ -1,0 +1,361 @@
+The architecture you've described is a common DevSecOps pattern, but there's one important point to clarify:
+
+**CrowdStrike Falcon Cloud Security (formerly Falcon Image Assessment / Container Security)** generally **does not upload a local `results.json` to the CrowdStrike cloud**. Instead, the scanner authenticates to the Falcon Cloud API, submits the image (or image metadata/layers), and CrowdStrike performs the assessment. The scanner returns the results locally in JSON (if requested), and the results are already associated with your Falcon tenant. You can archive the JSON as a pipeline artifact or send it to another system, but it is not normally "uploaded" separately.
+
+A typical GitLab CI flow looks like this:
+
+```text
+Developer
+    │
+    ▼
+GitLab
+    │
+    ▼
+Docker Build
+    │
+    ▼
+CrowdStrike Falcon Image Scan
+    │
+    ├── Pass Policy
+    │        │
+    │        ▼
+    │   Push Image
+    │        │
+    │        ▼
+    │   Deploy
+    │
+    └── Fail Policy
+             │
+             ▼
+      Stop Pipeline
+```
+
+---
+
+## Project Structure
+
+```text
+crowdstrike-secure-build/
+│
+├── Dockerfile
+├── .dockerignore
+├── .gitlab-ci.yml
+├── scripts/
+│   ├── build.sh
+│   ├── scan.sh
+│   └── publish.sh
+│
+├── config/
+│   └── crowdstrike.env
+│
+├── output/
+│   └── results.json
+│
+└── README.md
+```
+
+---
+
+# Dockerfile
+
+```dockerfile
+# --------------------------------------------------------
+# Use an official lightweight Alpine Linux image
+# --------------------------------------------------------
+FROM alpine:3.22
+
+# --------------------------------------------------------
+# Add descriptive metadata to the image
+# --------------------------------------------------------
+LABEL maintainer="Security Team"
+LABEL description="Application container scanned by CrowdStrike Falcon"
+
+# --------------------------------------------------------
+# Update package index
+# --------------------------------------------------------
+RUN apk update
+
+# --------------------------------------------------------
+# Install security updates
+# --------------------------------------------------------
+RUN apk upgrade
+
+# --------------------------------------------------------
+# Install CA certificates
+# Needed for TLS communication
+# --------------------------------------------------------
+RUN apk add --no-cache ca-certificates
+
+# --------------------------------------------------------
+# Install curl
+# Used by many applications
+# --------------------------------------------------------
+RUN apk add --no-cache curl
+
+# --------------------------------------------------------
+# Install bash
+# --------------------------------------------------------
+RUN apk add --no-cache bash
+
+# --------------------------------------------------------
+# Create non-root user
+# --------------------------------------------------------
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup
+
+# --------------------------------------------------------
+# Create working directory
+# --------------------------------------------------------
+WORKDIR /app
+
+# --------------------------------------------------------
+# Copy application files
+# --------------------------------------------------------
+COPY . .
+
+# --------------------------------------------------------
+# Change ownership
+# --------------------------------------------------------
+RUN chown -R appuser:appgroup /app
+
+# --------------------------------------------------------
+# Drop root privileges
+# --------------------------------------------------------
+USER appuser
+
+# --------------------------------------------------------
+# Default command
+# --------------------------------------------------------
+CMD ["sh"]
+```
+
+---
+
+# .dockerignore
+
+```text
+.git
+.gitlab
+README.md
+output/
+results.json
+```
+
+---
+
+# config/crowdstrike.env
+
+```bash
+# CrowdStrike Falcon Cloud URL
+FALCON_CLOUD=https://api.crowdstrike.com
+
+# Falcon API Client ID
+FALCON_CLIENT_ID=<CLIENT_ID>
+
+# Falcon API Secret
+FALCON_CLIENT_SECRET=<CLIENT_SECRET>
+
+# Image Assessment Policy Name
+IMAGE_POLICY=Production Policy
+
+# Repository
+IMAGE_NAME=myapp
+
+# Tag
+IMAGE_TAG=latest
+```
+
+In GitLab these values should be stored as **protected CI/CD variables**, not committed to source control.
+
+---
+
+# scripts/build.sh
+
+```bash
+#!/bin/bash
+
+# Exit immediately if a command fails
+set -e
+
+# Build the Docker image
+docker build \
+    -t ${IMAGE_NAME}:${IMAGE_TAG} \
+    .
+```
+
+---
+
+# scripts/scan.sh
+
+```bash
+#!/bin/bash
+
+# Stop execution if any command fails
+set -e
+
+# Load CrowdStrike configuration
+source config/crowdstrike.env
+
+# Create output directory
+mkdir -p output
+
+# Authenticate to CrowdStrike Falcon
+# (Placeholder: replace with the current Falcon CLI or API authentication method)
+falconctl auth \
+    --client-id "${FALCON_CLIENT_ID}" \
+    --client-secret "${FALCON_CLIENT_SECRET}"
+
+# Scan the Docker image
+# (Placeholder: replace with the current Falcon image assessment command)
+falcon-image scan \
+    --image "${IMAGE_NAME}:${IMAGE_TAG}" \
+    --policy "${IMAGE_POLICY}" \
+    --output-json output/results.json
+
+# Extract the policy verdict from the JSON
+STATUS=$(jq -r '.policy.status' output/results.json)
+
+# Check whether the image passed the configured policy
+if [[ "$STATUS" != "PASS" ]]; then
+    echo "Image failed CrowdStrike policy."
+    exit 1
+fi
+
+echo "Image passed CrowdStrike policy."
+```
+
+> **Note:** `falconctl` and `falcon-image` above are illustrative placeholders. CrowdStrike's container scanning tooling and commands vary by deployment model and version. In a real implementation, substitute the commands provided by your licensed Falcon Cloud Security scanner or API integration.
+
+---
+
+# scripts/publish.sh
+
+```bash
+#!/bin/bash
+
+# Stop on errors
+set -e
+
+# Login to GitLab registry
+docker login \
+    -u "${CI_REGISTRY_USER}" \
+    -p "${CI_REGISTRY_PASSWORD}" \
+    "${CI_REGISTRY}"
+
+# Tag image
+docker tag \
+    ${IMAGE_NAME}:${IMAGE_TAG} \
+    ${CI_REGISTRY_IMAGE}:${IMAGE_TAG}
+
+# Push image
+docker push \
+    ${CI_REGISTRY_IMAGE}:${IMAGE_TAG}
+```
+
+---
+
+# .gitlab-ci.yml
+
+```yaml
+# ----------------------------------------------------------
+# Pipeline stages
+# ----------------------------------------------------------
+stages:
+  - build
+  - security_scan
+  - publish
+
+# ----------------------------------------------------------
+# Global variables
+# ----------------------------------------------------------
+variables:
+  IMAGE_NAME: myapp
+  IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+
+# ----------------------------------------------------------
+# Build Stage
+# ----------------------------------------------------------
+build_image:
+  stage: build
+
+  image: docker:latest
+
+  services:
+    - docker:dind
+
+  script:
+    - chmod +x scripts/build.sh
+    - ./scripts/build.sh
+
+# ----------------------------------------------------------
+# CrowdStrike Scan
+# ----------------------------------------------------------
+crowdstrike_scan:
+
+  stage: security_scan
+
+  image: docker:latest
+
+  services:
+    - docker:dind
+
+  script:
+    - apk add jq bash curl
+    - chmod +x scripts/scan.sh
+    - ./scripts/scan.sh
+
+  artifacts:
+
+    when: always
+
+    paths:
+      - output/results.json
+
+# ----------------------------------------------------------
+# Publish
+# ----------------------------------------------------------
+publish:
+
+  stage: publish
+
+  image: docker:latest
+
+  services:
+    - docker:dind
+
+  script:
+    - chmod +x scripts/publish.sh
+    - ./scripts/publish.sh
+
+  dependencies:
+    - crowdstrike_scan
+
+  only:
+    - main
+```
+
+---
+
+## Pipeline Behavior
+
+| Stage    | Action                                                                 | Success         | Failure      |
+| -------- | ---------------------------------------------------------------------- | --------------- | ------------ |
+| Build    | Builds Docker image                                                    | Continue        | Stop         |
+| Scan     | CrowdStrike scans image against the configured image assessment policy | Continue        | Stop         |
+| Publish  | Push image to GitLab Container Registry                                | Image published | Not executed |
+| Artifact | Save `output/results.json`                                             | Yes             | Yes          |
+
+## Security Best Practices
+
+For a production implementation, consider adding:
+
+* Multi-stage Docker builds to reduce the final image size and attack surface.
+* Image signing with tools such as Sigstore Cosign after a successful scan.
+* SBOM generation (CycloneDX or SPDX) before scanning.
+* GitLab dependency, secret, and license scanning alongside the CrowdStrike image assessment.
+* Admission controls in Kubernetes (for example, Gatekeeper or Kyverno) to enforce that only images passing the CrowdStrike policy can be deployed.
+* Protected GitLab CI/CD variables for Falcon credentials instead of a committed `.env` file.
+* Immutable image tags (for example, using the Git commit SHA) rather than `latest`.
+* Optional notification steps (Slack, Microsoft Teams, email, or Jira) when a scan fails.
+
+This provides a realistic end-to-end CI/CD pattern where the image is built, evaluated against a CrowdStrike Falcon image assessment policy, the JSON results are retained as a GitLab artifact, and the image is published only if the policy evaluation succeeds.
