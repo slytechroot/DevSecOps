@@ -1,0 +1,11 @@
+DevOps for Hackers with Hands-On Labs
+
+https://ralphte.notion.site/DevOps-for-Hackers-with-Hands-On-Labs-w-Ralph-May-4-Hour-Workshop-99e7fa82b7f9485797141f77d352a1b8
+https://www.google.com/search?q=hackerops+with+ralph+may&client=firefox-b-1-d&hs=G8OU&sca_esv=f26a4e8abbd57b5a&sxsrf=AE3TifOpLYq4bR7eWsfJdgDebQSIfH5pVA:1767078965365&ei=NXxTab2FFtSckPIPqNTD4QU&start=30&sa=N&sstk=Af77f_eUOXEyO3cBOAsfd-epKhS-v9XhKIssEdvFCmmvLz5P51J-m10QkipYgZd-71OvaasUqACOaA4bdUKP7oMtlSNHrsq15LxH6YXv09MsrSMTQFJkSlncHnpmlaVx1qwlvMz3x7WvNlYJnb8_GrLm1YTfMx5O6oA&ved=2ahUKEwj985SQ4uSRAxVUDkQIHSjqMFw4FBDw0wN6BAgLEBc&biw=1920&bih=901&dpr=1
+https://www.google.com/search?client=firefox-b-1-d&q=hackerops+with+ralph+may
+https://github.com/ralphte/devops_4_hackers
+https://chaincoder.hashnode.dev/beyond-nmap-building-custom-recon-pipelines
+https://cobalt-strike.github.io/community_kit/
+https://www.mdsec.co.uk/2026/03/rip-regpwn/
+https://www.intrinsec.com/hide-the-threat-gpo-lateral-movement/
+https://codelivly.com/github-recon-the-underrated-technique/
